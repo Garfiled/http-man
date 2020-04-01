@@ -19,11 +19,17 @@ extern void handleHttp(HttpRequest& req);
 int processQuery(Session& sess)
 {
     int n = read(sess.fd,sess.buf+sess.len,sess.cap - sess.len);
-    std::cout << "processQuery:" << n << " " << sess.cap << std::endl;
-    if (n<=0)
+    // std::cout << "processQuery:" << n << " " << sess.cap << std::endl;
+    if (n<0)
     {
         return -1;
+    } else if (n==0) {
+        return ERR_HTTP_READ_EOF;
     }
+
+
+    // std::cout << sess.buf << std::endl;
+
     sess.len += n;
 
     int start=0;
@@ -46,8 +52,9 @@ int processQuery(Session& sess)
         if (req.version == "HTTP/1.0" && req.header["Connection"] != "Keep-Alive") {
             std::cout << "close fd" << std::endl;
             close(req.fd);
+            return ERR_HTTP_CONNECT_CLOSE;
         }
-        return ERR_HTTP_CONNECT_CLOSE;
+        return 0;
 
     } else if (ret==ERR_HTTP_NOT_COMPLETE)
     {

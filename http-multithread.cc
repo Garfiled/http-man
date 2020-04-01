@@ -1,9 +1,7 @@
 #include <unistd.h>
-#include <stdio.h>
 #include <sys/socket.h>
-#include <stdlib.h>
 #include <netinet/in.h>
-#include <pthread.h>
+#include <thread>
 #include <string>
 #include <iostream>
 #include <time.h>
@@ -12,11 +10,15 @@
 
 #define PORT 8080
 
-void* worker(void* argv);
-
-
-void sendHttpOK(HttpRequest& req);
+void* worker(Session* s);
+void sendHttpObj(HttpRequest& req,std::string);
 void handleHttp(HttpRequest& req);
+
+
+/*
+bench with ab
+ab -n 200000 -c 10 -k 127.0.0.1:8080/
+*/
 
 int main(int argc, char const *argv[])
 {
@@ -48,6 +50,7 @@ int main(int argc, char const *argv[])
 
     std::cout << "server start " << PORT << std::endl;
 
+
     while (true)
     {
         int new_fd = accept(socket_fd, (struct sockaddr *) &address, &addrlen);
@@ -58,13 +61,11 @@ int main(int argc, char const *argv[])
             continue;
         }
         Session* sess = new Session(new_fd,4096);
-        pthread_t* pid = new pthread_t();
-        int ret = pthread_create(pid,NULL,worker,(void*)sess);
-        if (ret!=0)
-        {
-            perror("create thread failed");
-            break;
-        }
+        auto w = new std::thread(worker,sess);
+        // 怎么join？
+
+        // std::thread w(worker,sess);
+        // 不join会有问题的
     }
 
     close(socket_fd);
@@ -82,10 +83,11 @@ void handleHttp(HttpRequest& req)
 
     }
 
-    sendHttpOK(req);
+    sendHttpObj(req,"ok");
 }
 
-void sendHttpOK(HttpRequest& req)
+
+void sendHttpObj(HttpRequest& req,std::string o) 
 {
     std::string ret;
     ret.append(req.version);
@@ -98,34 +100,31 @@ void sendHttpOK(HttpRequest& req)
     ret.append(buf,strlen(buf));
     ret.append("\r\n",2);
 
-    ret.append("Content-Length: 0\r\n",19);
+    ret.append("Content-Length: ",16);
+    ret.append(std::to_string(o.size()));
+    ret.append("\r\n",2);
     ret.append("Content-Type: text/plain; charset=utf-8\r\n",41);
-    std::cout << (req.version=="HTTP/1.0") << " " << (req.header["Connection"] == "Keep-Alive") << std::endl;
     if (req.version=="HTTP/1.0" && req.header["Connection"] == "Keep-Alive") {
         ret.append("Connection: keep-alive\r\n\r\n",26);
     } else {
         ret.append("\r\n",2);
     }
-    // ret.append("ok",2);
+    ret.append(o);
 
-    std::cout << ret << std::endl;
+    // std::cout << ret << std::endl;
     ::send(req.fd,ret.c_str(),ret.size(),0);
-    // std::cout << "sendHttpOK:" << fd << std::endl;
 }
 
-
-
-void* worker(void* argv)
+void* worker(Session* input)
 {
-    Session *sess_ptr = (Session*)argv;
-    Session sess = *sess_ptr;
-    delete sess_ptr;
+    Session sess = *input;
+    delete input;
     while (true)
     {
         int ret = processQuery(sess);
         if (ret!=0)
         {
-            if (ret!=ERR_HTTP_CONNECT_CLOSE) {
+            if (ret!=ERR_HTTP_CONNECT_CLOSE && ret!=ERR_HTTP_READ_EOF) {
                 std::cout << "processQuery err:" << ret << std::endl;
             }
             break;
