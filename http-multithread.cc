@@ -11,6 +11,8 @@
 #include <vector>
 #include <map>
 
+#include <time.h>
+
 #define PORT 8080
 
 #define CONTENT_LEN_LIMIT 500*1024*1024
@@ -22,13 +24,14 @@
 #define ERR_HTTP_HEADER_KV    100005
 #define ERR_HTTP_HEADER_CONTENT_LENGTH    100006
 #define ERR_HTTP_CONTENT_LIMIT            100007
+#define ERR_HTTP_CONNECT_CLOSE  100008
 
 class Session
 {
 public:
-    Session(int client_fd,int size)
+    Session(int _fd,int size)
     {
-        fd = client_fd;
+        fd = _fd;
         buf = new char[size];
         cap = size;
         len = 0;
@@ -66,12 +69,12 @@ int findSub(char* buf,int start,int end);
 
 int myAtoi(char* p,int end,int* val);
 
-void sendHttpOK(int fd);
+void sendHttpOK(HttpRequest& req);
 void handleHttp(HttpRequest& req);
 
 int main(int argc, char const *argv[])
 {
-    int socket_fd,epoll_fd;
+    int socket_fd;
     struct sockaddr_in address;
     socklen_t addrlen = sizeof(struct sockaddr_in);
 
@@ -91,22 +94,24 @@ int main(int argc, char const *argv[])
     }
     if (listen(socket_fd, 5) < 0)
     {
-        perror("listen");
+        perror("listen failed");
         exit(EXIT_FAILURE);
     }
 
     bzero(&address, addrlen);
 
+    std::cout << "server start " << PORT << std::endl;
+
     while (true)
     {
-        int client_fd = accept(socket_fd, (struct sockaddr *) &address, &addrlen);
+        int new_fd = accept(socket_fd, (struct sockaddr *) &address, &addrlen);
 
-        if (client_fd < 0)
+        if (new_fd < 0)
         {
-            std::cout << "accept error " << client_fd << std::endl;
+            std::cout << "accept error " << new_fd << std::endl;
             continue;
         }
-        Session* sess = new Session(client_fd,4096);
+        Session* sess = new Session(new_fd,4096);
         pthread_t* pid = new pthread_t();
         int ret = pthread_create(pid,NULL,worker,(void*)sess);
         if (ret!=0)
@@ -124,19 +129,18 @@ int main(int argc, char const *argv[])
 int processQuery(Session& sess)
 {
     int n = read(sess.fd,sess.buf+sess.len,sess.cap - sess.len);
-    if (n==0)
+    std::cout << "processQuery:" << n << " " << sess.cap << std::endl;
+    if (n<=0)
     {
         return -1;
     }
     sess.len += n;
 
-    std::cout  << sess.buf << std::endl;
-    // 开始解析命令，并决定命令到worker线程的路由
-
     int start=0;
     HttpRequest req;
     req.fd = sess.fd;
     int ret = parseHttp(sess.buf,&start,sess.len,req);
+
     if (ret == 0)
     {
         sess.start = start;
@@ -146,7 +150,14 @@ int processQuery(Session& sess)
             sess.start = 0;
         }
 
+        // 命令解析完成，可以交给worker线程处理，这里暂时本地处理
         handleHttp(req);
+
+        if (req.version == "HTTP/1.0" && req.header["Connection"] != "Keep-Alive") {
+            std::cout << "close fd" << std::endl;
+            close(req.fd);
+        }
+        return ERR_HTTP_CONNECT_CLOSE;
 
     } else if (ret==ERR_HTTP_NOT_COMPLETE)
     {
@@ -174,33 +185,56 @@ int processQuery(Session& sess)
 
 void handleHttp(HttpRequest& req)
 {
+
     if (req.method=="GET")
     {
 
     }
 
-    sendHttpOK(req.fd);
+    sendHttpOK(req);
 }
 
-void sendHttpOK(int fd)
+void sendHttpOK(HttpRequest& req)
 {
     std::string ret;
-    ret.append("HTTP/1.1 200 OK\r\n",17);
-    ret.append("Content-Length: 2\r\n\r\n",21);
-    ret.append("OK",2);
-    ::send(fd,ret.c_str(),ret.size(),0);
+    ret.append(req.version);
+    ret.append(" 200 OK\r\n",9);
+    ret.append("Date: ",6);
+    char buf[50];
+    time_t now = time(0);
+    struct tm tm = *localtime(&now);
+    strftime(buf, sizeof buf, "%a, %d %b %Y %H:%M:%S %Z", &tm);
+    ret.append(buf,strlen(buf));
+    ret.append("\r\n",2);
+
+    ret.append("Content-Length: 0\r\n",19);
+    ret.append("Content-Type: text/plain; charset=utf-8\r\n",41);
+    std::cout << (req.version=="HTTP/1.0") << " " << (req.header["Connection"] == "Keep-Alive") << std::endl;
+    if (req.version=="HTTP/1.0" && req.header["Connection"] == "Keep-Alive") {
+        ret.append("Connection: keep-alive\r\n\r\n",26);
+    } else {
+        ret.append("\r\n",2);
+    }
+    // ret.append("ok",2);
+
+    std::cout << ret << std::endl;
+    ::send(req.fd,ret.c_str(),ret.size(),0);
+    // std::cout << "sendHttpOK:" << fd << std::endl;
 }
 
 void* worker(void* argv)
 {
-    Session *sess_p = (Session*)argv;
-    Session sess = *sess_p;
-    delete sess_p;
+    Session *sess_ptr = (Session*)argv;
+    Session sess = *sess_ptr;
+    delete sess_ptr;
     while (true)
     {
         int ret = processQuery(sess);
         if (ret!=0)
         {
+            if (ret!=ERR_HTTP_CONNECT_CLOSE) {
+                std::cout << "processQuery err:" << ret << std::endl;
+            }
             break;
         }
     }
@@ -233,7 +267,7 @@ int parseHttp(char* buf,int* start_p,int length,HttpRequest& req)
         return ERR_HTTP_REQ_VERSION;
     req.version.append(buf+start,lineEnd-start);
 
-//    std::cout << req.method << " " << req.uri << " " << req.version << std::endl;
+   // std::cout << req.method << " " << req.uri << " " << req.version << std::endl;
 
     if (lineEnd == headerEnd)
     {
@@ -251,6 +285,7 @@ int parseHttp(char* buf,int* start_p,int length,HttpRequest& req)
             return ERR_HTTP_HEADER_KV;
         std::string header_key(buf+start,headerKeyLen);
         std::string header_val(buf+start+headerKeyLen+2,lineLen-headerKeyLen-2);
+        // std::cout << "header: " << header_key << " " << header_val << std::endl; 
         req.header.insert(std::pair<std::string,std::string>(header_key,header_val));
 
         start = lineEnd+2;
@@ -271,7 +306,6 @@ int parseHttp(char* buf,int* start_p,int length,HttpRequest& req)
         {
             req.body.append(buf+start,contentLength);
             start += contentLength;
-            std::cout << "body>" << req.body << std::endl;
         } else {
             return ERR_HTTP_NOT_COMPLETE;
         }
