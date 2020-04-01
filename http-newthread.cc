@@ -5,6 +5,7 @@
 #include <string>
 #include <iostream>
 #include <time.h>
+#include <string.h>
 
 #include "http-parser.h"
 
@@ -17,6 +18,7 @@ void handleHttp(HttpRequest& req);
 
 /*
 bench with ab
+ab -n 1 -c 1 -k -v 4 127.0.0.1:8080/
 ab -n 200000 -c 10 -k 127.0.0.1:8080/
 */
 
