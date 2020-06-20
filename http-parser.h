@@ -45,5 +45,15 @@ public:
 
     int fd;
 };
+// 解析http协议
+int parseHttp(char* buf,int* start_p,int length,HttpRequest& req);
+int findHeaderEnd(char* buf,int start,int end);
+int findLine(char* buf,int start,int end);
+int findSpace(char* buf,int start,int end);
+int findSub(char* buf,int start,int end);
+
+int myAtoi(char* p,int end,int* val);
 
 int processQuery(Session&);
+
+extern void handleHttp(HttpRequest& req);

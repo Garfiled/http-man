@@ -6,76 +6,64 @@
 
 #include "http-parser.h"
 
-// 解析http协议
-int parseHttp(char* buf,int* start_p,int length,HttpRequest& req);
-int findHeaderEnd(char* buf,int start,int end);
-int findLine(char* buf,int start,int end);
-int findSpace(char* buf,int start,int end);
-int findSub(char* buf,int start,int end);
-
-int myAtoi(char* p,int end,int* val);
-
-extern void handleHttp(HttpRequest& req);
-
 int processQuery(Session& sess)
 {
     int n = read(sess.fd,sess.buf+sess.len,sess.cap - sess.len);
-    // std::cout << "processQuery:" << n << " " << sess.cap << std::endl;
-    if (n<0)
-    {
+    if (n<0) {
         return -1;
     } else if (n==0) {
         return ERR_HTTP_READ_EOF;
     }
 
-
-    // std::cout << sess.buf << std::endl;
-
     sess.len += n;
-
-    int start=0;
-    HttpRequest req;
-    req.fd = sess.fd;
-    int ret = parseHttp(sess.buf,&start,sess.len,req);
-
-    if (ret == 0)
-    {
+    while (true) {
+      HttpRequest req;
+      req.fd = sess.fd;
+      int start=sess.start;
+      int ret = parseHttp(sess.buf,&start,sess.len,req);
+      if (ret == 0)
+      {
         sess.start = start;
-        if (start >= sess.len)
-        {
-            sess.len = 0;
-            sess.start = 0;
-        }
-
         // 命令解析完成，可以交给worker线程处理，这里暂时本地处理
         handleHttp(req);
 
         if (req.version == "HTTP/1.0" && req.header["Connection"] != "Keep-Alive") {
-            std::cout << "close fd" << std::endl;
-            close(req.fd);
-            return ERR_HTTP_CONNECT_CLOSE;
+          std::cout << "close fd" << std::endl;
+          close(req.fd);
+          return ERR_HTTP_CONNECT_CLOSE;
+        }
+
+        if (start >= sess.len) {
+          sess.len = 0;
+          sess.start = 0;
+          return 0;
+        } else {
+          continue;
+        }
+      } else if (ret==ERR_HTTP_NOT_COMPLETE) {
+        if (sess.len>=sess.cap) {
+          if (sess.len<CONTENT_LEN_LIMIT) {
+            if (sess.start>=sess.len/2) {
+              memcpy(sess.buf,sess.buf+sess.start,sess.len-sess.start);
+              sess.len = sess.len - sess.start;
+              sess.start = 0;
+            } else {
+              char* newBuf = new char[2*sess.cap];
+              memcpy(newBuf,sess.buf+sess.start,sess.cap-sess.start);
+              delete sess.buf;
+              sess.buf = newBuf;
+              sess.cap = 2*sess.cap;
+              sess.len = sess.len-sess.start;
+              sess.start = 0;
+            }
+          } else {
+            return ERR_HTTP_CONTENT_LIMIT;
+          }
         }
         return 0;
-
-    } else if (ret==ERR_HTTP_NOT_COMPLETE)
-    {
-        if (sess.len>=sess.cap)
-        {
-            if (sess.len<CONTENT_LEN_LIMIT)
-            {
-                char* newBuf = new char[2*sess.cap];
-                memcpy(newBuf,sess.buf+sess.start,sess.cap-sess.start);
-                delete sess.buf;
-                sess.buf = newBuf;
-                sess.cap = 2*sess.cap;
-                sess.len = sess.len-sess.start;
-                sess.start = 0;
-            } else {
-                return ERR_HTTP_CONTENT_LIMIT;
-            }
-        }
-    } else {
+      } else {
         return ret;
+      }
     }
 
     return 0;

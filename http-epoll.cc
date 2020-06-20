@@ -127,12 +127,14 @@ int main(int argc, char const *argv[])
 
 void handleHttp(HttpRequest& req)
 {
-    if (req.method=="GET")
-    {
-
-    }
-
-    sendHttpObj(req,"ok");
+  if (req.method=="GET") {
+    std::cout << "HttpRequest GET " << req.uri << " " << req.body.size() << std::endl;
+  } else if (req.method=="POST") {
+    std::cout << "HttpRequest POST " << req.uri << " " << req.body.size() << std::endl;
+  } else {
+    std::cout << "undefined HttpReq proto" << std::endl;
+  }
+  sendHttpObj(req,"ok");
 }
 
 void sendHttpObj(HttpRequest& req,std::string o)
