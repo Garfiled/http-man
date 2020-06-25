@@ -108,9 +108,9 @@ void accept_conn_cb(struct evconnlistener *listener, evutil_socket_t fd,
   // 设置 socket 为非阻塞
   evutil_make_socket_nonblocking(fd);
   auto *base = evconnlistener_get_base(listener);
-  auto *b = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
-  bufferevent_setcb(b, echo_read_cb, nullptr, echo_event_cb, sess);
-  bufferevent_enable(b, EV_READ|EV_WRITE);
+  auto *evt = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+  bufferevent_setcb(evt, echo_read_cb, nullptr, echo_event_cb, sess);
+  bufferevent_enable(evt, EV_READ|EV_WRITE);
 
 }
 
@@ -125,14 +125,13 @@ int main()
   sin.sin_family = AF_INET;
   sin.sin_addr.s_addr = htonl(INADDR_ANY);
   sin.sin_port = htons(port);
-  auto *base = event_base_new();
+  auto base = event_base_new();
 
-  auto *listener = evconnlistener_new_bind(
+  auto listener = evconnlistener_new_bind(
       base, accept_conn_cb, nullptr,
       LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1,
       reinterpret_cast<struct sockaddr *>(&sin), sizeof(sin));
-  if (listener == nullptr)
-  {
+  if (listener == nullptr) {
     std::cerr << "Couldn't create listener" << std::endl;
     return 1;
   }
