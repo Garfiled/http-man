@@ -8,14 +8,6 @@
 
 int processQuery(Session& sess)
 {
-    int n = read(sess.fd,sess.buf+sess.len,sess.cap - sess.len);
-    if (n<0) {
-        return -1;
-    } else if (n==0) {
-        return ERR_HTTP_READ_EOF;
-    }
-
-    sess.len += n;
     while (true) {
       HttpRequest req;
       req.fd = sess.fd;
@@ -24,15 +16,10 @@ int processQuery(Session& sess)
       if (ret == 0)
       {
         sess.start = start;
-        // 命令解析完成，可以交给worker线程处理，这里暂时本地处理
-        handleHttp(req);
-
-        if (req.version == "HTTP/1.0" && req.header["Connection"] != "Keep-Alive") {
-          std::cout << "close fd" << std::endl;
-          close(req.fd);
-          return ERR_HTTP_CONNECT_CLOSE;
-        }
-
+        ret = handleHttp(req);
+        if (ret!=0) {
+					return ret;
+				}
         if (start >= sess.len) {
           sess.len = 0;
           sess.start = 0;
@@ -43,7 +30,7 @@ int processQuery(Session& sess)
       } else if (ret==ERR_HTTP_NOT_COMPLETE) {
         if (sess.len>=sess.cap) {
           if (sess.len<CONTENT_LEN_LIMIT) {
-            if (sess.start>=sess.len/2) {
+            if (sess.start>=sess.len*3/4) {
               memcpy(sess.buf,sess.buf+sess.start,sess.len-sess.start);
               sess.len = sess.len - sess.start;
               sess.start = 0;
@@ -57,7 +44,13 @@ int processQuery(Session& sess)
               sess.start = 0;
             }
           } else {
-            return ERR_HTTP_CONTENT_LIMIT;
+						if (sess.start>0) {
+							memcpy(sess.buf,sess.buf+sess.start,sess.len-sess.start);
+              sess.len = sess.len - sess.start;
+              sess.start = 0;	
+						} else {
+            	return ERR_HTTP_CONTENT_LIMIT;
+						}
           }
         }
         return 0;

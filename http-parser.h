@@ -12,8 +12,6 @@
 #define ERR_HTTP_HEADER_KV    100005
 #define ERR_HTTP_HEADER_CONTENT_LENGTH    100006
 #define ERR_HTTP_CONTENT_LIMIT            100007
-#define ERR_HTTP_CONNECT_CLOSE  100008
-#define ERR_HTTP_READ_EOF 100009
 
 class Session
 {
@@ -51,9 +49,7 @@ int findHeaderEnd(char* buf,int start,int end);
 int findLine(char* buf,int start,int end);
 int findSpace(char* buf,int start,int end);
 int findSub(char* buf,int start,int end);
-
 int myAtoi(char* p,int end,int* val);
 
 int processQuery(Session&);
-
-extern void handleHttp(HttpRequest& req);
+int handleHttp(HttpRequest& req);

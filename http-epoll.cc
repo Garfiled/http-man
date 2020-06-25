@@ -18,6 +18,9 @@
 #define THREAD_NUM 1
 
 
+#define ERR_HTTP_NO_KEEPALIVE_CLOSE 2000001
+#define ERR_HTTP_READ_EOF           2000002
+
 class HttpServer
 {
 public:
@@ -27,7 +30,6 @@ public:
 
 int acceptConn(int socket_fd,int epoll_fd);
 void sendHttpObj(HttpRequest&,std::string);
-void handleHttp(HttpRequest& req);
 
 int main(int argc, char const *argv[])
 {
@@ -54,63 +56,60 @@ int main(int argc, char const *argv[])
         perror("listen");
         exit(EXIT_FAILURE);
     }
-
+   
+    std::cout << "listen:" << PORT << std::endl; 
     epoll_fd = epoll_create(MAX_EVENTS);
     struct epoll_event event;
     struct epoll_event eventList[MAX_EVENTS];
     event.events = EPOLLIN|EPOLLET;
     event.data.fd = socket_fd;
 
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, socket_fd, &event) < 0)
-    {
+    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, socket_fd, &event) < 0) {
         perror("epoll add failed");
         exit(EXIT_FAILURE);
     }
-
-
     HttpServer server;
-
-    //epoll
     while(1)
     {
         //epoll_wait
         int ret = epoll_wait(epoll_fd, eventList, MAX_EVENTS, 3000);
-
-        if(ret < 0)
-        {
+        if(ret < 0) {
             std::cout << "epoll error " << ret << std::endl;
             break;
-        } else if(ret == 0)
-        {
+        } else if(ret == 0) {
             continue;
         }
-
-        for(int i=0; i<ret; i++)
-        {
-            if ((eventList[i].events & EPOLLERR) || (eventList[i].events & EPOLLHUP) || !(eventList[i].events & EPOLLIN))
-            {
+        for(int i=0; i<ret; i++) {
+            if ((eventList[i].events & EPOLLERR) || (eventList[i].events & EPOLLHUP) || !(eventList[i].events & EPOLLIN)) {
                 std::cout << "epoll event error" << std::endl;
                 close (eventList[i].data.fd);
                 continue;
             }
-
-            if (eventList[i].data.fd == socket_fd)
-            {
+            if (eventList[i].data.fd == socket_fd) {
                 int ret = acceptConn(socket_fd,epoll_fd);
-                if (ret>0)
-                {
-                    server.session[ret] = Session(ret,4096);
+                if (ret>0) {
+                    server.session[ret] = Session(ret,128*1024);
                 }
-            }else{
-                if (server.session.end() == server.session.find(eventList[i].data.fd))
-                {
+            } else{
+                if (server.session.end() == server.session.find(eventList[i].data.fd)) {
                     std::cout << "session not found " << eventList[i].data.fd << std::endl;
                     continue;
                 }
-
-                int ret = processQuery(server.session[eventList[i].data.fd]);
-                if (ret!=0)
-                {
+                auto sess = server.session[eventList[i].data.fd];
+                int n = read(sess.fd,sess.buf+sess.len,sess.cap - sess.len);
+                int ret = 0;
+                if (n<0) {
+                    ret = n;
+                } else if (n==0) {
+                    ret = ERR_HTTP_READ_EOF;
+                } else {
+                    sess.len += n;
+                    ret = processQuery(sess);
+                }
+                if (ret!=0) {
+                    if (ret!=ERR_HTTP_READ_EOF) {
+											std::cout << "fd except close:" << eventList[i].data.fd<< " "<< ret << std::endl;
+										}
                     close(eventList[i].data.fd);
                     delete(server.session[eventList[i].data.fd].buf);
                     server.session.erase(eventList[i].data.fd);
@@ -125,7 +124,7 @@ int main(int argc, char const *argv[])
     return 0;
 }
 
-void handleHttp(HttpRequest& req)
+int handleHttp(HttpRequest& req)
 {
   if (req.method=="GET") {
     std::cout << "HttpRequest GET " << req.uri << " " << req.body.size() << std::endl;
@@ -135,6 +134,11 @@ void handleHttp(HttpRequest& req)
     std::cout << "undefined HttpReq proto" << std::endl;
   }
   sendHttpObj(req,"ok");
+
+  if (req.version == "HTTP/1.0" && req.header["Connection"] != "Keep-Alive") {
+      return ERR_HTTP_NO_KEEPALIVE_CLOSE;
+  }
+	return 0;
 }
 
 void sendHttpObj(HttpRequest& req,std::string o)
