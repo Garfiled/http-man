@@ -11,16 +11,19 @@
 
 #define PORT 8080
 
+#define ERR_HTTP_NO_KEEPALIVE_CLOSE 2000001
+#define ERR_HTTP_READ_EOF           2000002
+
 void* worker(Session* s);
 void sendHttpObj(HttpRequest& req,std::string);
-void handleHttp(HttpRequest& req);
-
 
 /*
 bench with ab
 ab -n 1 -c 1 -k -v 4 127.0.0.1:8080/
 ab -n 200000 -c 10 -k 127.0.0.1:8080/
 */
+
+//g++ http-newthread.cc http-parser.cc -lpthread -std=c++11
 
 int main(int argc, char const *argv[])
 {
@@ -62,7 +65,7 @@ int main(int argc, char const *argv[])
             std::cout << "accept error " << new_fd << std::endl;
             continue;
         }
-        Session* sess = new Session(new_fd,4096);
+        Session* sess = new Session(new_fd,128*1024);
         auto w = new std::thread(worker,sess);
         // 怎么join？
 
@@ -76,16 +79,21 @@ int main(int argc, char const *argv[])
 }
 
 
-
-void handleHttp(HttpRequest& req)
+int handleHttp(HttpRequest& req)
 {
+  if (req.method=="GET") {
+    std::cout << "HttpRequest GET " << req.uri << " " << req.body.size() << std::endl;
+  } else if (req.method=="POST") {
+    std::cout << "HttpRequest POST " << req.uri << " " << req.body.size() << std::endl;
+  } else {
+    std::cout << "undefined HttpReq proto" << std::endl;
+  }
+  sendHttpObj(req,"ok");
 
-    if (req.method=="GET")
-    {
-
-    }
-
-    sendHttpObj(req,"ok");
+  if (req.version == "HTTP/1.0" && req.header["Connection"] != "Keep-Alive") {
+    return ERR_HTTP_NO_KEEPALIVE_CLOSE;
+  }
+  return 0;
 }
 
 
@@ -123,12 +131,22 @@ void* worker(Session* input)
     delete input;
     while (true)
     {
-        int ret = processQuery(sess);
+        int n = read(sess.fd,sess.buf+sess.len,sess.cap - sess.len);
+        int ret = 0;
+        if (n<0) {
+          ret = n;
+        } else if (n==0) {
+          ret = ERR_HTTP_READ_EOF;
+        } else {
+          sess.len += n;
+          ret = processQuery(sess);
+        }
         if (ret!=0)
         {
-            if (ret!=ERR_HTTP_CONNECT_CLOSE && ret!=ERR_HTTP_READ_EOF) {
-                std::cout << "processQuery err:" << ret << std::endl;
+            if (ret!=ERR_HTTP_READ_EOF) {
+              std::cout << "fd except close:" << sess.fd << " "<< ret << std::endl;
             }
+            close(sess.fd);
             break;
         }
     }
