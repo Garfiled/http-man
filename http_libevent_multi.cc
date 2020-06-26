@@ -27,6 +27,7 @@ void reactor_worker(void* arg);
 void reactor_notify_cb(evutil_socket_t fd, short event, void *arg);
 void echo_read_cb(struct bufferevent *bev, void *arg);
 void echo_event_cb(struct bufferevent *bev, short events, void *ctx);
+void sig_handler(int signo, short events, void* arg);
 
 void sendHttpObj(HttpRequest&,std::string);
 
@@ -40,6 +41,7 @@ public:
 public:
     std::vector<int> reactor_notify_fds;
     int64_t seq;
+    struct event_base* base;
 };
 
 class Reactor
@@ -52,6 +54,7 @@ public:
 
 Server::Server(int count)
 {
+  this->base = event_base_new();
   for (int i=0;i<count;i++) {
     std::string fifo = "reactor.fifo." + std::to_string(i);
     int ret = mkfifo(fifo.c_str(),0777);
@@ -91,21 +94,24 @@ int main()
   sin.sin_family = AF_INET;
   sin.sin_addr.s_addr = htonl(INADDR_ANY);
   sin.sin_port = htons(port);
-  auto base = event_base_new();
 
   Server server(REACTOR_COUNT);
 
   auto *listener = evconnlistener_new_bind(
-      base, accept_conn_cb, &server,
+      server.base, accept_conn_cb, &server,
       LEV_OPT_CLOSE_ON_FREE|LEV_OPT_REUSEABLE, -1,
       reinterpret_cast<struct sockaddr *>(&sin), sizeof(sin));
   if (listener == nullptr) {
     LOGE("Couldn't create listener");
     return 1;
   }
-
   LOGI("listen:%d",port);
-  event_base_dispatch(base);
+
+  int signo = SIGINT;
+  struct event *sig_event = evsignal_new(server.base, signo, sig_handler, &server);
+  evsignal_add(sig_event, nullptr);
+
+  event_base_dispatch(server.base);
   return 0;
 }
 
@@ -154,6 +160,14 @@ void reactor_notify_cb(evutil_socket_t fd, short event, void *arg)
   auto *evt = bufferevent_socket_new(reactor->event_base, newfd, BEV_OPT_CLOSE_ON_FREE);
   bufferevent_setcb(evt, echo_read_cb, nullptr, echo_event_cb, sess);
   bufferevent_enable(evt, EV_READ|EV_WRITE);
+}
+
+void sig_handler(int signo, short events, void* arg)
+{
+  LOGI("signal:%d",signo);
+  auto server = (Server*)arg;
+  event_base_loopexit(server->base, nullptr);
+
 }
 
 int handleHttp(HttpRequest& req)

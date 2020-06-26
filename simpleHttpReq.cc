@@ -8,7 +8,7 @@
 #include <string>
 
 
-#define PORT 8080
+#define PORT 8000
 #define SERVER "127.0.0.1"
 
 
@@ -19,7 +19,7 @@ int main(int argc, char const *argv[])
   char contentGet[] = "GET / HTTP/1.1\r\n\r\n";
 
   std::string contentPost("POST / HTTP/1.1\r\n");
-  int contentLength = 2048*1024;
+  int contentLength = 1;
   contentPost.append("Content-Length: ",16);
   contentPost.append(std::to_string(contentLength));
   contentPost.append("\r\n\r\n",4);
