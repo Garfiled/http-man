@@ -72,14 +72,14 @@ int main(int argc, char const *argv[])
     while(1)
     {
         //epoll_wait
-        int ret = epoll_wait(epoll_fd, eventList, MAX_EVENTS, 3000);
-        if(ret < 0) {
-            std::cout << "epoll error " << ret << std::endl;
+        int event_count = epoll_wait(epoll_fd, eventList, MAX_EVENTS, 3000);
+        if(event_count < 0) {
+            std::cout << "epoll error " << event_count << std::endl;
             break;
-        } else if(ret == 0) {
+        } else if(event_count == 0) {
             continue;
         }
-        for(int i=0; i<ret; i++) {
+        for(int i=0; i<event_count; i++) {
             if ((eventList[i].events & EPOLLERR) || (eventList[i].events & EPOLLHUP) || !(eventList[i].events & EPOLLIN)) {
                 std::cout << "epoll event error" << std::endl;
                 close (eventList[i].data.fd);
